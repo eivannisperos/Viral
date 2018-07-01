@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.3.1/dist/leaflet.css"
+      integrity="sha512-Rksm5RenBEKSKFjgI3a41vrjkw4EVPlJ3+OiI65vTjIdo9brlAacEuKOiQ5OFh7cOI1bkDwLqdLw3Zg0cRJAAQ=="
+      crossorigin=""/>
+
+    <script type="text/javascript" src="js/jquery.js"></script>
+    <script type="text/javascript" src="js/tipsy.js"></script>
+
+    <script src="https://unpkg.com/leaflet@1.3.1/dist/leaflet.js"
+      integrity="sha512-/Nsx9X4HebavoBvEBuyp3I7od5tA0UzAxs+j83KgC8PU0kgB4XiK4Lfe4y4cgBtaRJQEIFCW+oC506aPT2L1zw=="
+      crossorigin=""></script>
+
+    <link rel="stylesheet" href="css/main.css">
+  </head>
+
+  <body>
+    <div class="container-horz">
+      <section id="map-section">
+        <fieldset>
+          <div>
+            <label>Average Income:</label><input type="radio" name="overlayCtrl" id="averageIncome">
+            <label>Crime Rate</label><input type="radio" name="overlayCtrl" id="crimeNumber">
+          </div>
+
+          <div>
+            <label>Dominant Ethnic Background</label><input type="radio" name="overlayCtrl" id="ethnicbg">
+          </div>
+
+          <div>
+            <label>Independant (Private) Schools</label><input type="checkbox" name="schoolCtrl1" id="private" >
+            <label>Public Schools</label><input type="checkbox" name="schoolCtrl2" id="public" >
+          <div>
+
+        </fieldset>
+        <!-- map goes here -->
+        <div id="mapid"></div>
+      </section>
+
+      <section class="container-vert">
+        <div class="bargraph-sec" id="bargraph-section"></div>
+        <div class="bargraph-sec" id="drop-bargraph-1">
+          <select id="select1"></select>
+        </div>
+        <div class="bargraph-sec" id="drop-bargraph-2">
+          <select id="select2"></select>
+        </div>
+      </section>
+    </div>
+
+
+
+    <script type="text/javascript" src="data/vancouver.js"></script>
+    <script type="text/javascript" src="data/surrey.js"></script>
+    <script type="text/javascript" src="data/richmond.js"></script>
+    <script type="text/javascript" src="js/d3.js"></script>
+    <script>
+      //radius of circle
+      var radius = 10;
+      var colorVacc = d3.scaleQuantize()
+        .range(['#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02','#a6761d','#666666']);
+
+      //active map
+      var mymap = L.map('mapid').setView([49.2827, -123.1207], 12.5);
+
+      //information bar
+      var info = L.control();
+
+      //legend
+      var legend = L.control({position: 'bottomright'});
+
+      L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token={accessToken}', {
+          attribution: 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="http://mapbox.com">Mapbox</a>',
+          maxZoom: 18,
+          id: 'mapbox.light',
+          accessToken: 'pk.eyJ1IjoiZWl2YW5uaXNwZXJvcyIsImEiOiJjamV4YTdnM2ExMHVoMndwY2N6ZGk2M3BsIn0.Ga6sMTa39-B_DchNNMKBwA'
+      }).addTo(mymap);
+
+      var containerBGraphW = $("#bargraph-section").width();
+      var containerBGraphH = $("#bargraph-section").height();
+
+      // bar graph
+      //set dimensions and margins of the graph
+       var margin = {top:20, right: 20, bottom: 30, left: 40},
+           width = containerBGraphW - margin.left - margin.right,
+           height = containerBGraphH - margin.top - margin.bottom;
+
+      //padding is space between the bars
+       var x = d3.scaleBand()
+              .range([0, width])
+              .padding(.2);
+       var y = d3.scaleLinear()
+              .range([height, 0]);
+
+
+      //bar graph/map communication
+      var targetNeighborhood;
+
+      var bargraph = d3.select("#bargraph-section").append("svg")
+                     .attr("width", width + margin.left + margin.right)
+                     .attr("height", height + margin.top + margin.bottom)
+                     .append("g")
+                     .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+      var selectOption = document.getElementById("select1");
+      var selectOptionTwo = document.getElementById("select2");
+
+      //sorts data to top 7 speakers
+      //contrals the amount of data set shown
+      function getTopEthnic(arrayData){  //sorting to top 3 function
+          arrayData.sort(function(a, b) {
+              return parseFloat(b.speakers) - parseFloat(a.speakers);
+          });
+         return arrayData.slice(0, 7);
+      }
+
+      function textToDiv(phrase, div) {
+        console.log("text to div activated");
+        var div = document.getElementById(div);
+        div.innerHTML += phrase;
+      }
+
+      //reset highlight feature
+      //controls backgraph 1 when highlighting certain aspects of the map (neighborhoods)
+      function highlightFeature(e) {
+        var layer = e.target;
+
+        layer.setStyle({
+          weight: 5,
+          color: '#ccc',
+          dashArray: '',
+          fillOpactiy: 0.7
+        });
+
+        //updates the info control with actual info
+        //in this case, this is median household income
+        info.update(layer.feature.properties);
+
+        targetNeighborhood = layer.feature.properties.name;
+
+        if (targetNeighborhood) {
+          //everything needs to update down here when
+          d3.csv("data/data-cities/"+ targetNeighborhood+ ".csv", function(error, data) {
+              if (error) {
+                console.log("Data not available");
+                return;
+              }
+              data.forEach(function (d) {
+                d.speakers = +d.speakers;
+              });
+
+              data = getTopEthnic(data);
+
+              // Scale the range of the data in the domains
+              x.domain(data.map(function(d) { return d.language; }));
+              y.domain([0, d3.max(data, function(d) { return d.speakers; })]);
+
+              //remove the existing bargraph first
+              bargraph.selectAll("*").remove();
+
+              //add a new bargraph based on incoming data
+              bargraph.selectAll(".bar")
+                  .data(data)
+                  .enter().append("rect")
+                  .attr("class", "bar")
+                  .attr("x", function(d) { return x(d.language); })
+                  .attr("width", x.bandwidth())
+                  .attr("y", function(d) { return y(d.speakers); })
+                  .attr("height", function(d) { return height - y(d.speakers); });
+
+              bargraph.append("text")
+                      .attr("x", (width / 2))
+                      .attr("y", 10 - (margin.top / 2))
+                      .attr("text-anchor", "middle")
+                      .style("font-size", "16px")
+                      .style("text-decoration", "underline")
+                      .text("Ethnicity: " + targetNeighborhood);
+
+              // add the x Axis
+              bargraph.append("g")
+                        .attr("transform", "translate(0," + height + ")")
+                        .call(d3.axisBottom(x));
+
+              // add the y Axis
+              bargraph.append("g")
+                        .call(d3.axisLeft(y));
+            });
+        }
+
+      }
+
+      //resets default style
+      function resetHighlight(e) {
+        geojson.resetStyle(e.target);
+        info.update()
+      }
+
+      //zooms to neighborhood when clicked
+      function zoomToFeature(e) {
+        mymap.fitBounds(e.target.getBounds());
+      }
+
+      //for each listener, add the action required
+      function onEachFeature(feature, layer) {
+        layer.on({
+          mouseover: highlightFeature,
+          mouseout: resetHighlight,
+          click: zoomToFeature
+        });
+      }
+
+      //handles vancouver chloropleth
+      d3.csv("data/med_avg_income_vanc.csv", function(data) {
+
+        for (var i = 0; i < data.length; i++) {
+          //take name of neighborhood in JSON
+          var vancNeighName = data[i].name;
+
+          var optionOne = document.createElement("option");
+          var optionTwo = document.createElement("option");
+
+          optionOne.text = data[i].name;
+          optionTwo.text = data[i].name;
+
+          selectOption.add(optionOne);
+          selectOptionTwo.add(optionTwo);
+
+          //crime rate
+          var crimeRate = parseFloat(data[i].crime);
+
+          //avg income in CSV
+          var vancNeighAvgValue = parseFloat(data[i].avgIncome);
+
+          //ethnic background
+          var ethnicbg = data[i].ethnicity;
+
+          //find corresponding vnacouver neighborhood inside the GEOJSON
+          for (var j = 0; j < vancNeighborhoods.features.length; j++) {
+            var jsonVancName = vancNeighborhoods.features[j].properties.name;
+            //place it inside
+            if (vancNeighName == jsonVancName) {
+              vancNeighborhoods.features[j].properties.value = vancNeighAvgValue;
+              vancNeighborhoods.features[j].properties.crime = crimeRate;
+              vancNeighborhoods.features[j].properties.ethnicity = ethnicbg;
+              break;
+            }
+          }
+
+        }
+
+        //median household income color scheme
+        function getColorMedHaus(d) {
+          return d > 70000  ? '#034e7b' :
+                 d > 60000  ? '#0570b0' :
+                 d > 50000  ? '#3690c0' :
+                 d > 40000  ? '#74a9cf' :
+                 d > 35000  ? '#a6bddb' :
+                 d > 30000  ? '#d0d1e6' :
+                           'white';
+        }
+
+        //crimerate color scheme
+        function getCrimeColor(d) {
+          return d > 400  ? '#4d004b' :
+                 d > 350  ? '#810f7c' :
+                 d > 300  ? '#88419d' :
+                 d > 250  ? '#8c6bb1' :
+                 d > 200  ? '#8c96c6' :
+                 d > 150  ? '#9ebcda' :
+                 d > 100  ? '#bfd3e6' :
+                 d > 50  ? '#e0ecf4' :
+                 d > 0  ? '#f7fcfd' :
+                           'white';
+        }
+
+        function getEthnicBG(d) {
+          return d == 'nEuropean' ? '#1b9e77' :
+                 d == 'china' ? '#d95f02' :
+                 d == 'philippines' ? '#7570b3' :
+                 d == 'indian' ? '#e7298a' :
+                 d == 'iranian' ? '#66a61e' :
+                 'white';
+        }
+
+
+        function styleCrime(vNeigh) {
+          return {
+              fillColor: getCrimeColor(vNeigh.properties.crime),
+              weight: 2,
+              opacity: 1,
+              color: 'white',
+              dashArray: '3',
+              fillOpacity: 0.7
+          };
+        }
+
+        function styleIncome(vNeigh) {
+          return {
+              fillColor: getColorMedHaus(vNeigh.properties.value),
+              weight: 2,
+              opacity: 1,
+              color: 'white',
+              dashArray: '3',
+              fillOpacity: 0.5
+          };
+        }
+
+        function styleEthnic(vNeigh) {
+          return {
+              fillColor: getEthnicBG(vNeigh.properties.ethnicity),
+              weight: 2,
+              opacity: 1,
+              color: 'white',
+              dashArray: '3',
+              fillOpacity: 0.5
+          }
+        }
+
+        //creates a div with info as a class
+        info.onAdd = function(mymap) {
+          this._div = L.DomUtil.create('div', 'info'); //create a div with info as a class
+          this.update();
+
+          return this._div;
+        }
+
+        //puts the information inside the div
+        //this is where the neighborhood is passed down
+        //also try updating the bar graph here
+        info.update = function(props) {
+            this._div.innerHTML = '<h3>Average Income of Neighborhoods</h3>' + (props ? '<b>' + props.name + '</b><br />' + "$" + props.value : 'Hover over a Neighborhood');
+            // if (props) {
+            //   targetNeighborhood = props.name;
+            // }
+
+        }
+
+        //data that goes into first graph
+        var selectDataOne;
+        var selectDataTwo;
+
+        //bargraph 1
+        var dropBargraphOne = d3.select("#drop-bargraph-1").append("svg")
+                      .attr("width", width + margin.left + margin.right)
+                      .attr("height", height + margin.top + margin.bottom)
+                      .append("g")
+                      .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+        var dropBargraphTwo = d3.select("#drop-bargraph-2").append("svg")
+                      .attr("width", width + margin.left + margin.right)
+                      .attr("height", height + margin.top + margin.bottom)
+                      .append("g")
+                      .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+      //when values of drop down changes...
+        $(selectOption).click(function(event) {
+          selectDataOne = $(selectOption).val();
+
+          d3.csv("data/data-cities/"+ selectDataOne +".csv", function(error, data) {
+            if (error) {
+              console.log("Data not available");
+              return;
+            }
+                  data.forEach(function (d) {
+                    d.speakers = +d.speakers;
+                  });
+
+                  data = getTopEthnic(data);
+
+                    // Scale the range of the data in the domains
+                  x.domain(data.map(function(d) { return d.language; }));
+                  y.domain([0, d3.max(data, function(d) { return d.speakers; })]);
+
+
+                  //remove the existing bargraph first
+                  dropBargraphOne.selectAll("*").remove();
+
+                    //repalce the return functions with a global variable - taking where the pointer is on the map and placing the value here
+                  dropBargraphOne.selectAll(".bar")
+                      .data(data)
+                      .enter().append("rect")
+                      .attr("class", "bar")
+                      .attr("x", function(d) {
+                        return x(d.language);
+                      })
+                      .attr("width", x.bandwidth())
+                      .attr("y", function(d) { return y(d.speakers); })
+                      .attr("height", function(d) { return height - y(d.speakers); });
+
+                    // add the x Axis
+                  dropBargraphOne.append("g")
+                      .attr("transform", "translate(0," + height + ")")
+                      .call(d3.axisBottom(x));
+
+                  // add the y Axis
+                  dropBargraphOne.append("g")
+                      .call(d3.axisLeft(y));
+                });
+        });
+
+        $(selectOptionTwo).click(function(event) {
+          selectDataTwo = $(selectOptionTwo).val();
+
+          d3.csv("data/data-cities/"+ selectDataTwo +".csv", function(error, data) {
+              if (error) {
+                console.log("Data not available");
+                return;
+              }
+                  data.forEach(function (d) {
+                    d.speakers = +d.speakers;
+                  });
+
+                  data = getTopEthnic(data);
+
+                    // Scale the range of the data in the domains
+                  x.domain(data.map(function(d) { return d.language; }));
+                  y.domain([0, d3.max(data, function(d) { return d.speakers; })]);
+
+
+                  //remove the existing bargraph first
+                  dropBargraphTwo.selectAll("*").remove();
+
+                    //repalce the return functions with a global variable - taking where the pointer is on the map and placing the value here
+                  dropBargraphTwo.selectAll(".bar")
+                      .data(data)
+                      .enter().append("rect")
+                      .attr("class", "bar")
+                      .attr("x", function(d) {
+                        return x(d.language);
+                      })
+                      .attr("width", x.bandwidth())
+                      .attr("y", function(d) { return y(d.speakers); })
+                      .attr("height", function(d) { return height - y(d.speakers); });
+
+                    // add the x Axis
+                  dropBargraphTwo.append("g")
+                      .attr("transform", "translate(0," + height + ")")
+                      .call(d3.axisBottom(x));
+
+                  // add the y Axis
+                  dropBargraphTwo.append("g")
+                      .call(d3.axisLeft(y));
+                });
+        });
+
+        //everything needs to update down here when
+        d3.csv("data/data-cities/Arbutus-Ridge.csv", function(error, data) {
+                data.forEach(function (d) {
+                  d.speakers = +d.speakers;
+                });
+
+                data = getTopEthnic(data);
+
+                  // Scale the range of the data in the domains
+                x.domain(data.map(function(d) { return d.language; }));
+                y.domain([0, d3.max(data, function(d) { return d.speakers; })]);
+
+                  //repalce the return functions with a global variable - taking where the pointer is on the map and placing the value here
+                dropBargraphOne.selectAll(".bar")
+                    .data(data)
+                    .enter().append("rect")
+                    .attr("class", "bar")
+                    .attr("x", function(d) {
+                      return x(d.language);
+                    })
+                    .attr("width", x.bandwidth())
+                    .attr("y", function(d) { return y(d.speakers); })
+                    .attr("height", function(d) { return height - y(d.speakers); });
+
+                  // add the x Axis
+                dropBargraphOne.append("g")
+                    .attr("transform", "translate(0," + height + ")")
+                    .call(d3.axisBottom(x));
+
+                // add the y Axis
+                dropBargraphOne.append("g")
+                    .call(d3.axisLeft(y));
+              });
+
+        //add all elements to map
+        info.addTo(mymap);
+
+        //update legend
+        legend.onAdd = function(mymap) {
+          //each div has a class with info and legend
+
+          var div = L.DomUtil.create('div', 'info legend'),
+          grades = [30000, 35000, 40000, 50000, 60000, 70000],
+          labels = [];
+
+          for (var i = 0; i < grades.length; i++) {
+            div.innerHTML += '<i style="background:' + getColorMedHaus(grades[i] + 1) +  '"></i> '
+            + grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '</br>' : '+');
+
+          }
+
+          return div;
+        }
+
+        legend.addTo(mymap);
+
+        //radio button listeners
+        geojson = L.geoJSON(vancNeighborhoods, {style: styleIncome, onEachFeature: onEachFeature}).addTo(mymap);
+
+        $('input[type=radio]').click(function() {
+          if (this.id == 'crimeNumber') {
+            if (mymap.hasLayer(geojson)) {
+              mymap.removeLayer(geojson);
+            }
+
+            geojson = L.geoJSON(vancNeighborhoods, {style: styleCrime, onEachFeature: onEachFeature}).addTo(mymap);
+            geojson.bringToBack();
+
+            //update legend
+            legend.onAdd = function(mymap) {
+              //each div has a class with info and legend
+
+              var div = L.DomUtil.create('div', 'info legend'),
+              grades = grades = [0, 50, 100, 150, 200, 250, 300, 350, 400],
+              labels = [];
+
+              for (var i = 0; i < grades.length; i++) {
+                div.innerHTML += '<i style="background:' + getCrimeColor(grades[i] + 1) +  '"></i> '
+                + grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '</br>' : '+');
+              }
+
+              return div;
+            }
+
+            //creates a div with info as a class
+            info.onAdd = function(mymap) {
+              this._div = L.DomUtil.create('div', 'info'); //create a div with info as a class
+              this.update();
+
+              return this._div;
+            }
+
+            //puts the information inside the div
+            info.update = function(props) {
+              this._div.innerHTML = '<h3>Number of Total Crimes Recorded</h3>' + (props ? '<b>' + props.name + '</b><br />' + " " + props.crime : 'Hover over a Neighborhood');
+            }
+
+            //add all elements to map
+            info.addTo(mymap);
+            legend.addTo(mymap);
+
+          } else if (this.id == 'averageIncome') {
+            if (mymap.hasLayer(geojson)) {
+              mymap.removeLayer(geojson);
+            }
+
+            geojson = L.geoJSON(vancNeighborhoods, {style: styleIncome, onEachFeature: onEachFeature}).addTo(mymap);
+            geojson.bringToBack();
+
+            //update legend
+            legend.onAdd = function(mymap) {
+              //each div has a class with info and legend
+
+              var div = L.DomUtil.create('div', 'info legend'),
+              grades = [30000, 35000, 40000, 50000, 60000, 70000],
+              labels = [];
+
+              for (var i = 0; i < grades.length; i++) {
+                div.innerHTML += '<i style="background:' + getColorMedHaus(grades[i] + 1) +  '"></i> '
+                + grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '</br>' : '+');
+
+              }
+
+              return div;
+            }
+
+            //creates a div with info as a class
+            info.onAdd = function(mymap) {
+              this._div = L.DomUtil.create('div', 'info'); //create a div with info as a class
+              this.update();
+
+              return this._div;
+            }
+
+            //puts the information inside the div
+            info.update = function(props) {
+              this._div.innerHTML = '<h3>Average Income of Neighborhoods</h3>' + (props ? '<b>' + props.name + '</b><br />' + "$" + props.value : 'Hover over a Neighborhood');
+            }
+
+            //add all elements to map
+            info.addTo(mymap);
+            legend.addTo(mymap);
+
+          } else if (this.id == 'ethnicbg') {
+            if (mymap.hasLayer(geojson)) {
+              mymap.removeLayer(geojson);
+            }
+
+            geojson = L.geoJSON(vancNeighborhoods, {style: styleEthnic, onEachFeature: onEachFeature}).addTo(mymap);
+            geojson.bringToBack();
+
+            //creates a div with info as a class
+            info.onAdd = function(mymap) {
+              this._div = L.DomUtil.create('div', 'info'); //create a div with info as a class
+              this.update();
+
+              return this._div;
+            }
+
+            //puts the information inside the div
+            info.update = function(props) {
+              this._div.innerHTML = '<h3>Dominant Ethnicity</h3>' + (props ? '<b>' + props.name + '</b><br />' + " " + props.ethnicity : 'Hover over a Neighborhood');
+            }
+
+            legend.onAdd = function(mymap) {
+              //each div has a class with info and legend
+
+              var div = L.DomUtil.create('div', 'info legend'),
+              grades = ['iranian', 'indian', 'philippines', 'china', 'nEuropean'],
+              labels = [];
+
+              for (var i = 0; i < grades.length; i++) {
+                div.innerHTML += '<i style="background:' + getEthnicBG(grades[i]) +  '"></i> '
+                 + (grades[i + 1] ?  grades[i] + '</br>' : 'european');
+
+              }
+
+              return div;
+            }
+
+            //add all elements to map
+            info.addTo(mymap);
+            legend.addTo(mymap);
+          }
+        });
+
+      });
+
+      //layers
+      L.geoJSON(surreyNeighborhoods).addTo(mymap);
+
+
+      //school points
+      var svg =  d3.select("#mapid").select("svg");
+      var g = svg.select("g").attr("class", "leaflet-zoom-hide");
+
+      d3.csv("data/vanc_full_data_elem.csv", function(error, data) {
+        var popUp;
+
+        var schoolLabel = L.control({position: 'bottomleft'});
+        var schoolLegend = L.control({position: 'bottomleft'});
+
+        data.forEach(function (d) {
+            d.LatLng = new L.LatLng(d.LATITUDE, d.LONGITUDE);
+        })
+
+        function getColorVacc(d) {
+          return d > 100  ? '#006d2c' :
+                 d > 95  ? '#2ca25f' :
+                 d > 90 ? '#66c2a4' :
+                 d > 80  ? '#fee8c8' :
+                 d > 70  ? '#fdbb84' :
+                 d > 60  ? '#e34a33' :
+                 d > 50  ? '#7f0000' :
+                           'white';
+        }
+
+
+        //mouse events function when hovering over dots
+        function handleMouseOver(d, i) {
+          var name = d.schoolName;
+
+          var lat = parseFloat(d.LATITUDE);
+          var long = parseFloat(d.LONGITUDE);
+
+          schoolLabel.onAdd = function(mymap) {
+            this._div = L.DomUtil.create('div', 'info school'); //create a div with info as a class
+            this.update();
+            return this._div;
+          }
+
+          schoolLabel.update = function(props) {
+            this._div.innerHTML = '<h3>School - Vaccination Rate in Percentage</h3>' + (name ? '<b>' + name + '</b><br />' : 'Hover over a School');
+          }
+
+          schoolLegend.onAdd = function(mymap) {
+            //each div has a class with info and legend
+
+            var div = L.DomUtil.create('div', 'info legend'),
+            grades = [50, 60, 70, 80, 90, 95, 100],
+            labels = [];
+
+            for (var i = 0; i < grades.length; i++) {
+              div.innerHTML += '<i style="background:' + getColorVacc(grades[i] + 1) +  '"></i> '
+              + grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '</br>' : '+');
+
+            }
+
+            return div;
+          }
+
+          schoolLabel.addTo(mymap);
+          schoolLegend.addTo(mymap);
+
+          d3.select(this).attr("r", radius * 4);
+
+        }
+
+
+        function handleMouseOut(d) {
+          d3.select(this).attr("r", radius);
+        }
+
+
+        var pub = document.getElementById('public');
+        var prv = document.getElementById('private');
+
+        var setDisplay;
+
+        //refreshes page to reload the data
+        $(pub).click(function() {
+          location.reload();
+        })
+
+        $(prv).click(function() {
+          location.reload();
+        })
+
+        var feature = g.selectAll("circle")
+            .data(data)
+            .enter()
+            .append("circle")
+            .attr("r", radius)
+            .attr("stroke-width", 2)
+            .attr("stroke", 'white')
+            .style("fill", function(d) {
+              var value = parseFloat(d.MEASLES);
+
+              if (value) {
+                return getColorVacc(value);
+              } else {
+                return "white";
+              }
+            })
+            .style("display", function(d) {
+              var type = d.SCHOOL_CATEGORY;
+              if (pub.checked == true && prv.checked == true) {
+                return 'inline';
+              } else if (pub.checked == false && prv.checked == false) {
+                return 'none';
+              } else if (pub.checked == true) {
+                if (type == 'Public School') {
+                  return 'inline'
+                }
+
+                if (prv.checked == true) {
+                  if (type == 'Independent School') {
+                    return 'inline';
+                  }
+                } else {
+                  return 'none';
+                }
+
+              } else if (prv.checked == true) {
+
+                if (type == 'Independent School') {
+                  return 'inline'
+                }
+
+                if (pub.checked == true) {
+                  if (type == 'Public School') {
+                    return 'inline';
+                  }
+                } else {
+                  return 'none';
+                }
+              }
+            })
+            .on("mouseover", handleMouseOver)
+            .on("mouseout", handleMouseOut);
+
+
+
+        function update() {
+            feature.attr("cx", function (d) {
+              return mymap.latLngToLayerPoint(d.LatLng).x;
+            });
+
+            feature.attr("cy", function (d) {
+              return mymap.latLngToLayerPoint(d.LatLng).y;
+            });
+        }
+
+        mymap.on("viewreset", update);
+        mymap.on("zoomend", update);
+        update();
+      });
+
+
+
+    </script>
+
+  </body>
+</html>
